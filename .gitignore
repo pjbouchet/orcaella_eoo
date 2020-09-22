@@ -6,3 +6,5 @@ data/
 orcaella_eoo.Rproj
 gis/rasters/
 extra/
+out/
+deprecated/

@@ -25,8 +25,6 @@ shortest_distance <- function(least.cost = TRUE,
                               closest.pts = 3, 
                               clip.width = 2500,
                               cost.surface,
-                              show.plot = FALSE,
-                              verbose = FALSE,
                               proj.coord.system = CRSKim){
   
   
@@ -39,12 +37,9 @@ shortest_distance <- function(least.cost = TRUE,
   #' @param closest.pts Number of target points considered in the calculations.
   #' @param clip.width Width of the buffer used to define crop the cost surface.
   #' @param cost.surface Input cost surface.
-  #' @param show.plot Logical. Whether to produce a plot showing input and target points and shortest path.
-  #' @param verbose Logical. If TRUE, prints outputs to console during execution.
   #' @param proj.coord.system Projected coordinate system.
   #'---------------------------------------------
-  
-  if(exists("pb")) pb$tick()$print()
+
   
   #'-------------------------------------------------
   # Project points
@@ -54,7 +49,7 @@ shortest_distance <- function(least.cost = TRUE,
   out.pts <- sp::spTransform(x = out.pts, CRSobj = proj.coord.system)
   
   #'-------------------------------------------------
-  # Calculate cartesian distances
+  # Calculate Cartesian distances
   #'-------------------------------------------------
   
   dd <- rgeos::gDistance(spgeom1 = in.pts, spgeom2 = out.pts, byid = TRUE)
@@ -74,8 +69,6 @@ shortest_distance <- function(least.cost = TRUE,
     # for multiple points, we can be more efficient by saving the transition matrices generated
     # in one run and re-use them in subsequent runs, where appropriate.
     
-    is.r <- FALSE # Indicator variable - will be TRUE if all.pts fall on the input raster
-    
     # Save the X closest river mouths
     
     target.pts <- sp::SpatialPoints(coords = out.pts@coords[which(dd%in%sort(dd)[1:closest.pts]),],
@@ -84,26 +77,45 @@ shortest_distance <- function(least.cost = TRUE,
     # Combine all points
     
     all.pts <- rgeos::gUnion(spgeom1 = in.pts, target.pts)
+    LL <- sp::spTransform(all.pts, CRSll)
     
     # If rasters have been previously been saved, check whether the points overlap any of them 
     
-    if(!purrr::is_empty(list.rasters)){
-      
-      over.rasters <- suppressWarnings(purrr::map(.x = list.rasters, .f = ~raster::extract(x = .x, y = sp::spTransform(all.pts, CRSll)) %>% ifelse(is.na(.), 9999, .) %>% all(.==1))) %>% do.call(c, .)
-      
-      # If suitable rasters are identified, use the corresponding transition matrix
-      # instead of recalculating it
-      
-      if(any(over.rasters)){
-        is.r <- TRUE
-        focal.r <- min(which(over.rasters))
-        Conductance <- list.conductance[[focal.r]]}
-    }
+    raster.index <- NULL
     
-    # If not, proceed from scratch
-    
-    if(!is.r){
+    if(!purrr::is_empty(lat.extent)){
       
+      x1 <- purrr::map_int(.x = lat.extent, .f = ~{
+        raster::extent(.x)[1] <= raster::extent(LL)[1]
+      })
+      x2 <- purrr::map_int(.x = lat.extent, .f = ~{
+        raster::extent(.x)[2] >= raster::extent(LL)[2]
+      })
+      y1 <- purrr::map_int(.x = lat.extent, .f = ~{
+        raster::extent(.x)[3] <= raster::extent(LL)[3]
+      })
+      y2 <- purrr::map_int(.x = lat.extent, .f = ~{
+        raster::extent(.x)[4] >= raster::extent(LL)[4]
+      })
+      
+      ex.tbl <- cbind(x1, x2, y1, y2)
+      
+      totals <- apply(X = ex.tbl, MARGIN = 1, FUN = sum)
+      
+      
+      if(any(totals==4)){
+        
+        raster.index <- max(which(totals==4))
+        # is.r <<- TRUE
+        Conductance <- list.conductance[[raster.index]]}
+      
+    } 
+   
+    # If suitable rasters are identified, use the corresponding transition matrix
+    # instead of recalculating it
+    
+    if(is.null(raster.index)){
+    
       #'-------------------------------------------------
       # Create buffer
       #'-------------------------------------------------
@@ -111,7 +123,6 @@ shortest_distance <- function(least.cost = TRUE,
       r.ext <- as(extent(all.pts), "SpatialPolygons")
       r.ext <- rgeos::gBuffer(spgeom = r.ext, width = clip.width)
       sp::proj4string(r.ext) <- proj.coord.system
-      r.ext <- sp::spTransform(x = r.ext, CRSobj = CRSll)
       
       #'-------------------------------------------------
       # Clip raster
@@ -122,6 +133,7 @@ shortest_distance <- function(least.cost = TRUE,
       r <- raster::mask(x = r, mask = r.ext)
       
       list.rasters <<- append(x = list.rasters, values = r) # Add to raster list
+      lat.extent <<- append(x = lat.extent, values = raster::extent(r)) # Add to raster list
       
       #'-------------------------------------------------
       # Compute transition matrix, with geographic correction
@@ -135,6 +147,7 @@ shortest_distance <- function(least.cost = TRUE,
       
     }
     
+    
     #'-------------------------------------------------
     # Re-project points
     #'-------------------------------------------------
@@ -146,23 +159,117 @@ shortest_distance <- function(least.cost = TRUE,
     # Identify shortest path
     #'-------------------------------------------------
     
-    sPath <- suppressWarnings(gdistance::shortestPath(Conductance, 
-                                                      sp::coordinates(in.pts), 
-                                                      sp::coordinates(target.pts), 
-                                                      output = "SpatialLines"))
+    safe_path <- purrr::safely(gdistance::shortestPath)
     
-    ind <- purrr::map_dbl(.x = sPath@lines, .f = ~.x@Lines[[1]]@coords %>% nrow())
-    sPath <- sPath[which(ind==min(ind[ind>1])),]
+    sPath <- purrr::map(1:3, ~safe_path(x = Conductance, 
+                                     origin = coordinates(in.pts), 
+                                     goal = coordinates(target.pts)[.x,], 
+                                     output = "SpatialLines"))
+    
+    sPath <- purrr::map(sPath, "result") %>% purrr::compact(.) %>% do.call(rbind, .)
+    
+    # sPath <- suppressWarnings(purrr::map(.x = 1:closest.pts,
+    #                                      .f = ~gdistance::shortestPath(x = Conductance, 
+    #                                                   origin = coordinates(in.pts), 
+    #                                                   goal = coordinates(target.pts)[.x,], 
+    #                                                   output = "SpatialLines")))
+
+    # ind <- purrr::map_dbl(.x = sPath@lines, .f = ~.x@Lines[[1]]@coords %>% nrow())
+    # sPath <- sPath[which(ind==min(ind[ind>1])),]
     
     #'-------------------------------------------------
     # Calculate length
     #'-------------------------------------------------
     
-    rgeos::gLength(sp::spTransform(sPath, CRSKim))
+    sPath.min <- min(rgeos::gLength(sp::spTransform(sPath, CRSKim), byid = TRUE))
+    return(sPath.min)
+    # rgeos::gLength(sp::spTransform(sPath, CRSKim))
     
   } 
 }
 
+#'---------------------------------------------
+# Function to compute percent volume contours
+#'---------------------------------------------
+
+# http://www.spatialecology.com/htools/pctvolcontour.php
+# A percent volume contour represents the boundary of the area that 
+# contains x% of the volume of a probability density distribution. 
+
+pvc <- function(k, convert.to.poly = FALSE, smoothing = 20){
+  
+  #'---------------------------------------------
+  # PARAMETERS
+  #'---------------------------------------------
+  #' @param k Desired % of the volume  
+  #' @param poly Logical. Converts raster to polygons.
+  #' @param smoothing Amount of smoothing for polygons
+  #'---------------------------------------------
+  
+  # Can also be done by numeric optimisation as per the code below
+  
+  # extract_k <-  function(input.raster, kern = 0.9){
+  #   
+  #   # https://gis.stackexchange.com/questions/272950/95-contour-from-kernel-density-estimates
+  #   
+  #   cover <- function(r){
+  #     Total <- sum(r[]) * kern
+  #     function(t) sum(r[][r[]>t])-Total
+  #   }
+  #   
+  #   # One-dimensional root finding
+  #   val <- uniroot(cover(input.raster), c(0, max(input.raster[])))
+  #   output.raster <- input.raster
+  #   output.raster[output.raster<val$root] <- NA
+  #   return(output.raster)
+  # }
+  # 
+  # k90.r <- extract_k(input.raster = bivariate.r, kern = 0.9)
+  # k50.r <- extract_k(input.raster = bivariate.r, kern = 0.5)
+  
+  # Calculate a percent volume on a raster or based on a systematic sample
+  
+  kr <- spatialEco::raster.vol(x = bivariate.r, p = k)
+  
+  k.pts <- raster::extract(x = kr, y = kimb.grid[, c("dfresh", "depth")])
+  k.pts[is.na(k.pts)] <- 0
+  k.pts <- kimb.grid[k.pts==1,]
+  k.pts$val <- 1
+  
+  res <- raster::rasterFromXYZ(xyz = k.pts[, c("x", "y", "val")])
+  sp::proj4string(res) <- CRSll
+  
+  if(convert.to.poly){
+    
+    HR.poly <- raster::rasterToPolygons(res, n = 16, na.rm = TRUE, digits = 4, dissolve = TRUE)
+    
+    s <- "polyID"
+    HR.polys<-list(0)
+    pr <- 0
+    
+    ##define the area of tiny fragment polygons (4 pixles or smaller)
+    min.poly.size <- 4*((res@extent@xmax-res@extent@xmin)/res@ncols)^2
+    
+    for (p in 1:length(HR.poly@polygons[[1]]@Polygons)) {
+      if (HR.poly@polygons[[1]]@Polygons[[p]]@area > min.poly.size) {
+        pr<-pr+1
+        HR.polys[[pr]]<-HR.poly@polygons[[1]]@Polygons[[p]]
+      }
+    }
+    
+    HR.polys <- sp::Polygons(HR.polys, ID = s) # convert to polygons object
+    HR.polys <- maptools::checkPolygonsHoles(HR.polys) #assign holes correctly
+    HR.polys <- sp::SpatialPolygons(list(HR.polys)) #convert to spatial polygons
+    
+    HR.polys <- smoothr::smooth(HR.polys, method = "ksmooth", smoothness = smoothing)
+    sp::proj4string(HR.polys) <- CRSll
+    
+    res <- list(raster = res, poly = HR.polys)
+  }
+  
+  return(res)
+  
+}
 
 # Conservation assessment -------------------------------------------------
 
@@ -252,7 +359,7 @@ calc.eoo <- function(dataset.list, alphaval = 1, convex.hull = FALSE){
   #' @param convex.hull Logical. If TRUE, the EOO is calculated as a minimum convex polygon.
   #'---------------------------------------------
   
-  purrr:::map2_dbl(.x = dataset.list, 
+  furrr:::future_map2_dbl(.x = dataset.list, 
                    .y = alphaval,
                    .f = ~{
                      
@@ -273,7 +380,7 @@ calc.eoo <- function(dataset.list, alphaval = 1, convex.hull = FALSE){
                                                 write_results = FALSE, 
                                                 show_progress = FALSE)
                      
-                     eoo[[1]]})
+                     eoo[[1]]}, .progress = TRUE)
   
 }
 
@@ -297,6 +404,8 @@ calc.aoo <- function (input.data,
   #' @param Cell_size_AOO Grid size (in km) used for estimating AOO. Defaults to 2 as per IUCN guidelines.
   #' @param nbe.rep.rast.AOO Number of rasters with random starting position for estimating the AOO. NULL by default, but some minimal translation of the raster are still done.
   #'---------------------------------------------
+  
+  if(exists("pb")) pb$tick()$print()
   
   if(is.null(coordinate.system)) coordinate.system <- raster::crs("+proj=cea +lon_0=Central Meridian+lat_ts=Standard Parallel+x_0=False Easting+y_0=False Northing +ellps=WGS84")
   
@@ -633,27 +742,24 @@ rescale_raster <- function(r){
 # Function to calculate a percentile CI
 #'---------------------------------------------
 
-bci <- function(dat, perc = 95, print.res = FALSE, print.precision = 2){
+bci <- function(dat, perc = 95){
   
   #'---------------------------------------------
   # PARAMETERS
   #'---------------------------------------------
   #' @param dat Input values.
   #' @param perc Width of percentile confidence interval. Defauls to 0.95 for 95% CI.
-  #' @param print.res Logical. Whether to print the output to the R console.
-  #' @param print.precision Number of significant digits used in the output. 
   #'---------------------------------------------
   
   dat.mean <- mean(dat, na.rm = TRUE)
+  dat.median <- median(dat, na.rm = TRUE)
   
   dat.low <- quantile(sort(dat), (100-perc)/(2*100)) 
   dat.high <- quantile(sort(dat), 1-(100-perc)/(2*100)) 
-  
-  if(print.res) cat(paste0(perc, "% bootstrap CI: ", round(dat.mean, print.precision), 
-             " (", round(dat.low, print.precision), "; ", round(dat.high, print.precision), ")"))
-  
-  res <- c(dat.mean, dat.low, dat.high)
+
+  res <- c(dat.mean, dat.median, dat.low, dat.high)
   names(res)[1] <- "mean"
+  names(res)[2] <- "median"
   return(res)
 }
 
