@@ -8,3 +8,6 @@ gis/rasters/
 extra/
 out/
 deprecated/
+ALA_CitationGuidelines.pdf
+GBIF_CitationGuidelines.pdf
+R/05_Corrections.R
