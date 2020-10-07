@@ -104,7 +104,7 @@ fig3 <- (fig3A | fig3B) + plot_annotation(tag_levels = 'A') &
 
 # Save to file
  
-ggsave(filename = "out/Fig3.png", plot = fig3, height = 4, width = 10)
+ggsave(filename = "out/Fig3.tiff", plot = fig3, height = 4, width = 10, dpi = 300)
 
 
 #  | Figure 4 ----------
@@ -154,7 +154,7 @@ fig4 <- (fig4A | fig4B) +
 
 # Save to file
 
-ggsave(filename = "out/Fig4.png", plot = fig4, height = 4.5, width = 10)
+ggsave(filename = "out/Fig4.tiff", plot = fig4, height = 4.5, width = 10, dpi = 300)
 
 # Supplementary -----------------------------------------------------------------
 
