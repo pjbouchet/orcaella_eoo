@@ -67,7 +67,7 @@ ggsave(filename = "out/Fig1_Cambridge.pdf", plot = map.cambridge, device = "pdf"
 fig3A <- raster::as.data.frame(bivariate.r, xy = TRUE) %>% 
   ggplot(data = .) + 
   geom_raster(aes(x = x, y = y, fill = layer)) + 
-  xlab("Distance to river (km)") + 
+  xlab("Distance to freshwater (km)") + 
   ylab("Depth (m)") + 
   scale_x_continuous(breaks = seq(0, 80, 10), expand = c(0,0)) +
   scale_y_continuous(breaks = seq(-100, 0, 10), expand = c(0,0)) +
@@ -280,7 +280,7 @@ plot(density(snub.dat$depth), type = "l", main = "", xlab = "Depth (m)", ylab = 
 text(-110, 0.102, expression(bold("A")), cex = 1.5)
 segments(min(hdi.depth), 0, 0, 0, lwd = 2)
 
-plot(density(snub.dat$dfresh), type = "l", main = "", xlab = "Distance to river (km)", ylab = "Density", col = "#FFA908", lwd = 1.5)
+plot(density(snub.dat$dfresh), type = "l", main = "", xlab = "Distance to freshwater (km)", ylab = "Density", col = "#FFA908", lwd = 1.5)
 text(63, 0.117, expression(bold("B")), cex = 1.5)
 segments(0, 0, max(hdi.dfresh), 0, lwd = 2)
 
